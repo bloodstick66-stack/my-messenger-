@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>My Messenger</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#075e54">
+<link rel="icon" href="icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;font-family:system-ui,-apple-system,"Noto Sans Bengali",sans-serif;background:#efeae2;color:#1c1c1c}
+.screen{display:none;height:100%;flex-direction:column}
+.screen.on{display:flex}
+header{background:#075e54;color:#fff;padding:14px;display:flex;align-items:center;gap:10px;font-weight:600;font-size:18px}
+header span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+button{border:0;border-radius:10px;padding:12px 16px;font-size:16px;background:#128c7e;color:#fff;cursor:pointer}
+header button{background:transparent;padding:4px 8px;font-size:15px}
+input{width:100%;padding:13px;font-size:16px;border:1px solid #ccc;border-radius:10px;font-family:inherit}
+#auth{justify-content:center;padding:24px;gap:12px;background:#fff}
+#auth h1{font-size:28px;color:#075e54;margin-bottom:6px}
+#err{color:#c0392b;font-size:14px;min-height:18px}
+#switch{background:none;color:#075e54;padding:6px}
+#users{flex:1;overflow-y:auto;background:#fff}
+.user{padding:14px;border-bottom:1px solid #eee;display:flex;align-items:center;gap:12px;cursor:pointer}
+.user:active{background:#f2f2f2}
+.av{width:42px;height:42px;border-radius:50%;background:#128c7e;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+.empty{padding:24px;color:#777;text-align:center}
+#msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
+.m{max-width:80%;padding:8px 11px;border-radius:12px;background:#fff;align-self:flex-start;word-wrap:break-word}
+.m.me{background:#d9fdd3;align-self:flex-end}
+.m small{display:block;font-size:11px;color:#777;text-align:right;margin-top:2px}
+form{display:flex;gap:8px;padding:8px 8px calc(8px + env(safe-area-inset-bottom,0px));background:#f0f0f0}
+form button{padding:12px 18px}
+</style>
+</head>
+<body>
+
+<section id="auth" class="screen">
+  <h1>My Messenger</h1>
+  <input id="name" placeholder="আপনার নাম" autocomplete="name">
+  <input id="email" type="email" placeholder="ইমেইল" autocomplete="email">
+  <input id="pass" type="password" placeholder="পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর)" autocomplete="current-password">
+  <div id="err"></div>
+  <button id="go">সাইন আপ</button>
+  <button id="switch">আগে থেকে অ্যাকাউন্ট আছে? লগইন করুন</button>
+</section>
+
+<section id="list" class="screen">
+  <header><span id="me">চ্যাট</span><button id="out">লগআউট</button></header>
+  <div id="users"></div>
+</section>
+
+<section id="chat" class="screen">
+  <header><button id="back">←</button><span id="peer"></span></header>
+  <div id="msgs"></div>
+  <form id="send"><input id="text" placeholder="মেসেজ লিখুন" autocomplete="off"><button>পাঠান</button></form>
+</section>
+
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,createUserWithEmailAndPassword,signInWithEmailAndPassword,onAuthStateChanged,signOut,updateProfile} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore,doc,setDoc,collection,addDoc,query,orderBy,onSnapshot,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAGT01B-PPTbdeHkUFWyjdkl1mV_hn3xXY",
+  authDomain: "my-messenger-c4ada.firebaseapp.com",
+  projectId: "my-messenger-c4ada",
+  storageBucket: "my-messenger-c4ada.firebasestorage.app",
+  messagingSenderId: "1029005966682",
+  appId: "1:1029005966682:web:8901ffc95e679e0f33c763"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const $ = id => document.getElementById(id);
+
+let signup = true, unsubUsers = null, unsubMsgs = null;
+
+function show(id){
+  document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === id));
+}
+
+// --- সাইন আপ / লগইন ---
+function setMode(isSignup){
+  signup = isSignup;
+  $("name").style.display = isSignup ? "" : "none";
+  $("go").textContent = isSignup ? "সাইন আপ" : "লগইন";
+  $("switch").textContent = isSignup ? "আগে থেকে অ্যাকাউন্ট আছে? লগইন করুন" : "নতুন অ্যাকাউন্ট খুলুন";
+  $("err").textContent = "";
+}
+$("switch").onclick = () => setMode(!signup);
+
+$("go").onclick = async () => {
+  const name = $("name").value.trim(), email = $("email").value.trim(), pass = $("pass").value;
+  $("err").textContent = "";
+  try{
+    if(signup){
+      if(!name){ $("err").textContent = "নাম লিখুন"; return; }
+      const cred = await createUserWithEmailAndPassword(auth, email, pass);
+      await updateProfile(cred.user, {displayName: name});
+      await setDoc(doc(db, "users", cred.user.uid), {name, email});
+    }else{
+      await signInWithEmailAndPassword(auth, email, pass);
+    }
+  }catch(e){
+    const map = {
+      "auth/email-already-in-use":"এই ইমেইল দিয়ে আগেই অ্যাকাউন্ট খোলা হয়েছে",
+      "auth/invalid-email":"ইমেইলটা সঠিক নয়",
+      "auth/weak-password":"পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের দিন",
+      "auth/invalid-credential":"ইমেইল বা পাসওয়ার্ড ভুল",
+      "auth/network-request-failed":"ইন্টারনেট সংযোগ চেক করুন"
+    };
+    $("err").textContent = map[e.code] || e.message;
+  }
+};
+
+$("out").onclick = () => signOut(auth);
+
+// --- লগইন অবস্থা ---
+onAuthStateChanged(auth, user => {
+  if(unsubUsers){ unsubUsers(); unsubUsers = null; }
+  if(unsubMsgs){ unsubMsgs(); unsubMsgs = null; }
+  if(!user){ setMode(true); show("auth"); return; }
+  $("me").textContent = user.displayName || user.email;
+  show("list");
+  unsubUsers = onSnapshot(collection(db, "users"), snap => {
+    const box = $("users");
+    box.innerHTML = "";
+    const others = snap.docs.filter(d => d.id !== user.uid);
+    if(!others.length){
+      box.innerHTML = '<div class="empty">এখনো কেউ নেই। বন্ধুকে অ্যাপে সাইন আপ করতে বলুন।</div>';
+      return;
+    }
+    others.forEach(d => {
+      const u = d.data();
+      const row = document.createElement("div");
+      row.className = "user";
+      const av = document.createElement("div");
+      av.className = "av";
+      av.textContent = (u.name || "?").charAt(0).toUpperCase();
+      const nm = document.createElement("div");
+      nm.textContent = u.name || u.email;
+      row.append(av, nm);
+      row.onclick = () => openChat(user, d.id, u);
+      box.appendChild(row);
+    });
+  });
+});
+
+// --- চ্যাট ---
+function openChat(me, peerId, peer){
+  const chatId = [me.uid, peerId].sort().join("_");
+  $("peer").textContent = peer.name || peer.email;
+  $("msgs").innerHTML = "";
+  show("chat");
+  if(unsubMsgs) unsubMsgs();
+  const q = query(collection(db, "chats", chatId, "messages"), orderBy("createdAt"));
+  unsubMsgs = onSnapshot(q, snap => {
+    const box = $("msgs");
+    box.innerHTML = "";
+    snap.docs.forEach(d => {
+      const m = d.data();
+      const el = document.createElement("div");
+      el.className = "m" + (m.from === me.uid ? " me" : "");
+      el.textContent = m.text;
+      const t = document.createElement("small");
+      const dt = m.createdAt ? m.createdAt.toDate() : new Date();
+      t.textContent = dt.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+      el.appendChild(t);
+      box.appendChild(el);
+    });
+    box.scrollTop = box.scrollHeight;
+  });
+  $("send").onsubmit = async e => {
+    e.preventDefault();
+    const text = $("text").value.trim();
+    if(!text) return;
+    $("text").value = "";
+    try{
+      await addDoc(collection(db, "chats", chatId, "messages"), {text, from: me.uid, createdAt: serverTimestamp()});
+    }catch(err){
+      alert("মেসেজ পাঠানো যায়নি: " + err.message);
+    }
+  };
+}
+
+$("back").onclick = () => {
+  if(unsubMsgs){ unsubMsgs(); unsubMsgs = null; }
+  show("list");
+};
+if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+</script>
+</body>
+</html>
